@@ -1,6 +1,7 @@
 import requests
 from bs4 import BeautifulSoup
 import os
+import json
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -10,7 +11,7 @@ CHANNEL_NAME = "فری ۲"
 
 CHANNEL_URL = "https://t.me/s/pposhte_pardee"
 
-LAST_FILE = "last_message.txt"
+STATE_FILE = "last_messages.json"
 
 
 GMAIL_USER = os.environ.get("GMAIL_USER")
@@ -21,6 +22,7 @@ GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD")
 headers = {
     "User-Agent": "Mozilla/5.0"
 }
+
 
 
 def get_messages():
@@ -36,78 +38,96 @@ def get_messages():
         "html.parser"
     )
 
+
     messages = soup.find_all(
         "div",
         class_="tgme_widget_message"
     )
+
 
     result = []
 
 
     for item in messages:
 
+        message_id = item.get(
+            "data-post"
+        )
+
+
         text = item.find(
             "div",
             class_="tgme_widget_message_text"
         )
 
-        if text:
 
-            message = text.get_text(
+        if message_id and text:
+
+            message_text = text.get_text(
                 "\n",
                 strip=True
             )
 
-            if message:
-                result.append(message)
+
+            if message_text:
+
+                result.append(
+                    {
+                        "id": message_id,
+                        "text": message_text
+                    }
+                )
 
 
-    return result[-20:]
+    return result
 
 
 
-def read_old():
+def load_state():
 
-    if os.path.exists(LAST_FILE):
+    if os.path.exists(STATE_FILE):
 
         with open(
-            LAST_FILE,
+            STATE_FILE,
             "r",
             encoding="utf-8"
         ) as file:
 
-            return file.read().split(
-                "\n---MESSAGE---\n"
-            )
+            return json.load(file)
+
 
     return []
 
 
 
-def save_old(messages):
+def save_state(messages):
 
     with open(
-        LAST_FILE,
+        STATE_FILE,
         "w",
         encoding="utf-8"
     ) as file:
 
-        file.write(
-            "\n---MESSAGE---\n".join(messages)
+        json.dump(
+            messages,
+            file,
+            ensure_ascii=False,
+            indent=2
         )
 
 
 
-def send_email(message):
+def send_email(messages):
 
     mail = MIMEMultipart()
+
 
     mail["From"] = GMAIL_USER
 
     mail["To"] = GMAIL_TO
 
     mail["Subject"] = (
-        f"پیام جدید از {CHANNEL_NAME}"
+        f"{len(messages)} پیام جدید از {CHANNEL_NAME}"
     )
 
 
@@ -116,11 +136,30 @@ def send_email(message):
 {CHANNEL_NAME}
 
 
-پیام جدید:
+تعداد پیام‌های جدید:
+{len(messages)}
+
+
+====================
+
+"""
+
+
+    for index, message in enumerate(
+        messages,
+        start=1
+    ):
+
+        body += f"""
+
+پیام شماره {index}
 
 --------------------
 
 {message}
+
+====================
+
 """
 
 
@@ -131,6 +170,7 @@ def send_email(message):
             "utf-8"
         )
     )
+
 
 
     server = smtplib.SMTP_SSL(
@@ -158,23 +198,49 @@ def send_email(message):
 
 new_messages = get_messages()
 
-old_messages = read_old()
+
+old_messages = load_state()
+
+
+
+old_ids = {
+    item["id"]
+    for item in old_messages
+}
+
+
+
+messages_to_send = []
+
 
 
 for message in new_messages:
 
-    if message not in old_messages:
+    if message["id"] not in old_ids:
 
-        send_email(message)
+        messages_to_send.append(
+            message["text"]
+        )
+
 
         old_messages.append(
             message
         )
 
 
-save_old(
-    old_messages[-100:]
+
+if messages_to_send:
+
+    send_email(
+        messages_to_send
+    )
+
+
+
+save_state(
+    old_messages[-500:]
 )
+
 
 
 print(
